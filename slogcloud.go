@@ -3,8 +3,8 @@ package slogcloud
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"log"
 	"log/slog"
 	"os"
 	"time"
@@ -137,6 +137,7 @@ func NewCloudWatchLogHandler(client *CloudwatchClient) *CloudWatchLogHandler {
 // NewCloudwatchClient initializes a CloudwatchClient with user-provided AWS credentials
 // and creates a log stream. If the log group doesn't exist, it will create it.
 func NewCloudwatchClient(accessKey, secretAccessKey, logGroup, region string) (*CloudwatchClient, error) {
+	fmt.Printf("Just a temp print statement")
 	cfg, err := config.LoadDefaultConfig(context.TODO(),
 		config.WithRegion(region),
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKey, secretAccessKey, "")),
@@ -146,40 +147,71 @@ func NewCloudwatchClient(accessKey, secretAccessKey, logGroup, region string) (*
 	}
 
 	cwClient := cloudwatchlogs.NewFromConfig(cfg)
-	_, err = cwClient.DescribeLogGroups(context.TODO(), &cloudwatchlogs.DescribeLogGroupsInput{
-		LogGroupNamePrefix: aws.String(logGroup),
-	})
 
+	// Explicitly check if the exact log group exists
+	exists := false
+	output, err := cwClient.DescribeLogGroups(context.TODO(), &cloudwatchlogs.DescribeLogGroupsInput{
+		LogGroupNamePattern: aws.String(logGroup), // Use exact match
+	})
 	if err != nil {
-		var notFoundErr *types.ResourceNotFoundException
-		if errors.As(err, &notFoundErr) {
-			// Create log group if not found
-			_, err = cwClient.CreateLogGroup(context.TODO(), &cloudwatchlogs.CreateLogGroupInput{
-				LogGroupName: aws.String(logGroup),
-			})
-			if err != nil {
-				return nil, fmt.Errorf("failed to create log group: %w", err)
+		fmt.Printf("Error checking log group existence: %v", err)
+		log.Printf("Error checking log group existence: %v", err)
+	} else {
+		for _, group := range output.LogGroups {
+			if aws.ToString(group.LogGroupName) == logGroup {
+				exists = true
+				break
 			}
-		} else {
-			return nil, fmt.Errorf("error describing log group: %w", err)
 		}
 	}
 
-	// Add a small delay after creating the log group to ensure AWS has propagated the creation
-	time.Sleep(2 * time.Second)
+	// If the log group doesn't exist, create it
+	if !exists {
+		fmt.Printf("Log group %s does not exist, creating...", logGroup)
+		log.Printf("Log group %s does not exist, creating...", logGroup)
+		_, err = cwClient.CreateLogGroup(context.TODO(), &cloudwatchlogs.CreateLogGroupInput{
+			LogGroupName: aws.String(logGroup),
+		})
+		if err != nil {
+			fmt.Printf("failed to create the log group")
+			return nil, fmt.Errorf("failed to create log group: %w", err)
+		}
+		fmt.Printf("Log group %s created successfully", logGroup)
+		log.Printf("Log group %s created successfully", logGroup)
 
+		// Add a delay after creating the log group
+		time.Sleep(5 * time.Second)
+	} else {
+		log.Printf("Log group %s already exists", logGroup)
+	}
+
+	// Generate a unique log stream name
 	logStream := fmt.Sprintf("slogcloud-stream-%s-%s",
 		time.Now().Format("20060102T150405"),
 		uuid.New().String(),
 	)
 
-	// Create the log stream
-	_, err = cwClient.CreateLogStream(context.TODO(), &cloudwatchlogs.CreateLogStreamInput{
-		LogGroupName:  aws.String(logGroup),
-		LogStreamName: aws.String(logStream),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create CloudWatch log stream: %w", err)
+	log.Printf("Creating log stream %s in group %s", logStream, logGroup)
+
+	// Create the log stream with retries
+	maxRetries := 3
+	var lastErr error
+	for i := 0; i < maxRetries; i++ {
+		_, err = cwClient.CreateLogStream(context.TODO(), &cloudwatchlogs.CreateLogStreamInput{
+			LogGroupName:  aws.String(logGroup),
+			LogStreamName: aws.String(logStream),
+		})
+		if err == nil {
+			log.Printf("Log stream created successfully")
+			break
+		}
+		lastErr = err
+		log.Printf("Attempt %d: Failed to create log stream: %v", i+1, err)
+		time.Sleep(2 * time.Second)
+	}
+
+	if lastErr != nil {
+		return nil, fmt.Errorf("failed to create CloudWatch log stream after %d attempts: %w", maxRetries, lastErr)
 	}
 
 	return &CloudwatchClient{
