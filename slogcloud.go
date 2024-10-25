@@ -137,7 +137,6 @@ func NewCloudWatchLogHandler(client *CloudwatchClient) *CloudWatchLogHandler {
 // NewCloudwatchClient initializes a CloudwatchClient with user-provided AWS credentials
 // and creates a log stream. If the log group doesn't exist, it will create it.
 func NewCloudwatchClient(accessKey, secretAccessKey, logGroup, region string) (*CloudwatchClient, error) {
-	fmt.Printf("Just a temp print statement")
 	cfg, err := config.LoadDefaultConfig(context.TODO(),
 		config.WithRegion(region),
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKey, secretAccessKey, "")),
@@ -151,10 +150,9 @@ func NewCloudwatchClient(accessKey, secretAccessKey, logGroup, region string) (*
 	// Explicitly check if the exact log group exists
 	exists := false
 	output, err := cwClient.DescribeLogGroups(context.TODO(), &cloudwatchlogs.DescribeLogGroupsInput{
-		LogGroupNamePattern: aws.String(logGroup), // Use exact match
+		LogGroupNamePattern: aws.String(logGroup),
 	})
 	if err != nil {
-		fmt.Printf("Error checking log group existence: %v", err)
 		log.Printf("Error checking log group existence: %v", err)
 	} else {
 		for _, group := range output.LogGroups {
@@ -167,20 +165,17 @@ func NewCloudwatchClient(accessKey, secretAccessKey, logGroup, region string) (*
 
 	// If the log group doesn't exist, create it
 	if !exists {
-		fmt.Printf("Log group %s does not exist, creating...", logGroup)
 		log.Printf("Log group %s does not exist, creating...", logGroup)
 		_, err = cwClient.CreateLogGroup(context.TODO(), &cloudwatchlogs.CreateLogGroupInput{
 			LogGroupName: aws.String(logGroup),
 		})
 		if err != nil {
-			fmt.Printf("failed to create the log group")
 			return nil, fmt.Errorf("failed to create log group: %w", err)
 		}
-		fmt.Printf("Log group %s created successfully", logGroup)
 		log.Printf("Log group %s created successfully", logGroup)
 
 		// Add a delay after creating the log group
-		time.Sleep(5 * time.Second)
+		time.Sleep(3 * time.Second)
 	} else {
 		log.Printf("Log group %s already exists", logGroup)
 	}
