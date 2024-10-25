@@ -16,7 +16,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// Environment constants
+// Environment constants to use
 const (
 	PROD = "prod"
 	DEV  = "dev"
