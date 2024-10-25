@@ -3,6 +3,7 @@ package slogcloud
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -145,14 +146,13 @@ func NewCloudwatchClient(accessKey, secretAccessKey, logGroup, region string) (*
 	}
 
 	cwClient := cloudwatchlogs.NewFromConfig(cfg)
-
-	// Check if the log group exists, and create it if it doesn’t.
 	_, err = cwClient.DescribeLogGroups(context.TODO(), &cloudwatchlogs.DescribeLogGroupsInput{
 		LogGroupNamePrefix: aws.String(logGroup),
 	})
+
 	if err != nil {
-		var notFound *types.ResourceNotFoundException
-		if fmt.Errorf("%w", err) == notFound {
+		var notFoundErr *types.ResourceNotFoundException
+		if errors.As(err, &notFoundErr) {
 			// Create log group if not found
 			_, err = cwClient.CreateLogGroup(context.TODO(), &cloudwatchlogs.CreateLogGroupInput{
 				LogGroupName: aws.String(logGroup),
@@ -165,8 +165,13 @@ func NewCloudwatchClient(accessKey, secretAccessKey, logGroup, region string) (*
 		}
 	}
 
-	// Generate a unique log stream name
-	logStream := fmt.Sprintf("slogcloud-stream-%s-%s", time.Now().Format("20060102T150405"), uuid.New().String())
+	// Add a small delay after creating the log group to ensure AWS has propagated the creation
+	time.Sleep(2 * time.Second)
+
+	logStream := fmt.Sprintf("slogcloud-stream-%s-%s",
+		time.Now().Format("20060102T150405"),
+		uuid.New().String(),
+	)
 
 	// Create the log stream
 	_, err = cwClient.CreateLogStream(context.TODO(), &cloudwatchlogs.CreateLogStreamInput{
