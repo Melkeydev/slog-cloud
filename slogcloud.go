@@ -133,26 +133,46 @@ func NewCloudWatchLogHandler(client *CloudwatchClient) *CloudWatchLogHandler {
 	return &CloudWatchLogHandler{client: client}
 }
 
-// NewCloudwatchClient initializes a CloudwatchClient with user-provided AWS credentials and creates a log stream.
+// NewCloudwatchClient initializes a CloudwatchClient with user-provided AWS credentials
+// and creates a log stream. If the log group doesn't exist, it will create it.
 func NewCloudwatchClient(accessKey, secretAccessKey, logGroup, region string) (*CloudwatchClient, error) {
-	// Load AWS config with user-provided credentials
 	cfg, err := config.LoadDefaultConfig(context.TODO(),
 		config.WithRegion(region),
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKey, secretAccessKey, "")))
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKey, secretAccessKey, "")),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("could not load AWS config: %w", err)
 	}
 
 	cwClient := cloudwatchlogs.NewFromConfig(cfg)
 
-	logStream := fmt.Sprintf("slog-cloud-%s-%s", time.Now().Format("20060102T150405"), uuid.New().String())
+	// Check if the log group exists, and create it if it doesn’t.
+	_, err = cwClient.DescribeLogGroups(context.TODO(), &cloudwatchlogs.DescribeLogGroupsInput{
+		LogGroupNamePrefix: aws.String(logGroup),
+	})
+	if err != nil {
+		var notFound *types.ResourceNotFoundException
+		if fmt.Errorf("%w", err) == notFound {
+			// Create log group if not found
+			_, err = cwClient.CreateLogGroup(context.TODO(), &cloudwatchlogs.CreateLogGroupInput{
+				LogGroupName: aws.String(logGroup),
+			})
+			if err != nil {
+				return nil, fmt.Errorf("failed to create log group: %w", err)
+			}
+		} else {
+			return nil, fmt.Errorf("error describing log group: %w", err)
+		}
+	}
 
-	// Create a new log stream
+	// Generate a unique log stream name
+	logStream := fmt.Sprintf("slogcloud-stream-%s-%s", time.Now().Format("20060102T150405"), uuid.New().String())
+
+	// Create the log stream
 	_, err = cwClient.CreateLogStream(context.TODO(), &cloudwatchlogs.CreateLogStreamInput{
 		LogGroupName:  aws.String(logGroup),
 		LogStreamName: aws.String(logStream),
 	})
-
 	if err != nil {
 		return nil, fmt.Errorf("failed to create CloudWatch log stream: %w", err)
 	}
